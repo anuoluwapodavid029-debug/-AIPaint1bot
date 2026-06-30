@@ -8,7 +8,6 @@ import os
 import sys
 import logging
 import io
-import requests
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -78,11 +77,6 @@ ART_STYLES = {
 user_sessions = {}
 
 
-def get_gemini_model():
-    """Get Gemini model instance"""
-    return genai.GenerativeModel('gemini-2.0-flash-exp-image-generation')
-
-
 async def generate_image_with_gemini(prompt: str, aspect_ratio: str = "1:1") -> tuple:
     """
     Generate an image using Gemini AI
@@ -147,8 +141,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/generate - Generate an image\n"
         "/settings - Configure settings\n"
         "/help - Get help\n"
-        "/about - Bot information\n"
-        "/support - Get support"
+        "/about - Bot information"
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -204,20 +197,6 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 **Created for:** @{BOT_NAME}"
     )
     await update.message.reply_text(about_text, parse_mode="Markdown")
-
-
-async def support_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /support command"""
-    support_text = (
-        "📞 **Support**\n\n"
-        "For help or questions:\n"
-        "• Use /help for guidance\n"
-        "• Contact the bot admin\n\n"
-        "📚 **Useful Resources:**\n"
-        "• Google Gemini AI: https://ai.google.dev/\n"
-        "• Telegram Bot API: https://core.telegram.org/bots"
-    )
-    await update.message.reply_text(support_text, parse_mode="Markdown")
 
 
 async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -473,7 +452,6 @@ def main():
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("help", help_command))
         application.add_handler(CommandHandler("about", about_command))
-        application.add_handler(CommandHandler("support", support_command))
         application.add_handler(CommandHandler("generate", generate_command))
         application.add_handler(CommandHandler("settings", settings_command))
         
