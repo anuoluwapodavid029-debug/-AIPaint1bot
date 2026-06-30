@@ -1,13 +1,14 @@
 """
-AIPaint1bot - A Telegram bot for AI-powered image generation
-Uses Google Gemini AI to generate images from text descriptions
+AIPaint1bot - A Telegram bot for FREE AI-powered image generation
+Uses Pollinations.ai API - NO API KEY REQUIRED!
 Ready for deployment on Railway using GitHub
 """
 
 import os
 import sys
 import logging
-import io
+import requests
+from io import BytesIO
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -19,26 +20,17 @@ from telegram.ext import (
     ContextTypes
 )
 from dotenv import load_dotenv
-import google.generativeai as genai
 
 # Load environment variables
 load_dotenv()
 
 # Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "False").lower() == "true"
 
 if not BOT_TOKEN:
     print("❌ BOT_TOKEN is not set in environment variables")
     sys.exit(1)
-
-if not GEMINI_API_KEY:
-    print("❌ GEMINI_API_KEY is not set in environment variables")
-    sys.exit(1)
-
-# Configure Gemini
-genai.configure(api_key=GEMINI_API_KEY)
 
 # Logging setup
 log_level = logging.DEBUG if DEBUG_MODE else logging.INFO
@@ -52,7 +44,7 @@ logger = logging.getLogger(__name__)
 BOT_NAME = "AIPaint1bot"
 BOT_VERSION = "1.0.0"
 
-# Available aspect ratios
+# Available aspect ratios for Pollinations.ai
 ASPECT_RATIOS = {
     "1:1": "1:1",
     "16:9": "16:9",
@@ -63,59 +55,99 @@ ASPECT_RATIOS = {
 
 # Available art styles
 ART_STYLES = {
-    "photorealistic": "Photorealistic",
-    "anime": "Anime/Manga",
+    "realistic": "Realistic",
+    "anime": "Anime",
+    "cartoon": "Cartoon",
     "oil_painting": "Oil Painting",
     "watercolor": "Watercolor",
-    "sketch": "Sketch/Drawing",
-    "3d_render": "3D Render",
-    "cinematic": "Cinematic",
-    "abstract": "Abstract"
+    "sketch": "Sketch",
+    "3d": "3D Render",
+    "cinematic": "Cinematic"
 }
 
-# User session storage (in-memory, for Railway deployment)
+# User session storage
 user_sessions = {}
 
 
-async def generate_image_with_gemini(prompt: str, aspect_ratio: str = "1:1") -> tuple:
+async def generate_image_free(prompt: str, aspect_ratio: str = "1:1", style: str = "realistic") -> tuple:
     """
-    Generate an image using Gemini AI
+    Generate an image using Pollinations.ai API (FREE - No API Key Required)
     
     Args:
         prompt: Text description of the image
         aspect_ratio: Aspect ratio (1:1, 16:9, 9:16, 4:3, 3:4)
+        style: Art style
     
     Returns:
         Tuple of (success, image_data_or_error_message)
     """
     try:
-        # Generate image using Gemini
-        model = genai.GenerativeModel('gemini-2.0-flash-exp-image-generation')
+        # Map style to Pollinations.ai style parameters
+        style_map = {
+            "realistic": "photorealistic",
+            "anime": "anime",
+            "cartoon": "cartoon",
+            "oil_painting": "oil-painting",
+            "watercolor": "watercolor",
+            "sketch": "sketch",
+            "3d": "3d-render",
+            "cinematic": "cinematic"
+        }
         
-        # Construct the full prompt with style and aspect ratio
-        full_prompt = f"{prompt} - Generate a high-quality image in {aspect_ratio} aspect ratio."
+        pollinations_style = style_map.get(style, "photorealistic")
         
-        response = model.generate_content(
-            full_prompt,
-            generation_config={
-                "temperature": 0.9,
-                "top_p": 0.95,
-                "top_k": 0,
-                "max_output_tokens": 2048,
-            }
-        )
+        # Map aspect ratio
+        ratio_map = {
+            "1:1": "square",
+            "16:9": "landscape",
+            "9:16": "portrait",
+            "4:3": "standard",
+            "3:4": "standard-portrait"
+        }
         
-        # Extract image from response
-        if hasattr(response, '_result') and hasattr(response._result, 'candidates'):
-            candidate = response._result.candidates[0]
-            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                for part in candidate.content.parts:
-                    if hasattr(part, 'inline_data') and part.inline_data:
-                        mime_type = part.inline_data.mime_type
-                        image_data = part.inline_data.data
-                        return True, (image_data, mime_type)
+        pollinations_ratio = ratio_map.get(aspect_ratio, "square")
         
-        return False, "No image generated. Please try a different prompt."
+        # Construct the URL with parameters
+        # Using Pollinations.ai API (FREE)
+        encoded_prompt = requests.utils.quote(prompt)
+        url = f"https://image.pollinations.ai/prompt/{encoded_prompt}"
+        
+        # Add parameters
+        params = {
+            "width": 1024,
+            "height": 1024,
+            "seed": "random",
+            "nologo": "true"
+        }
+        
+        # Adjust dimensions based on aspect ratio
+        if aspect_ratio == "16:9":
+            params["width"] = 1024
+            params["height"] = 576
+        elif aspect_ratio == "9:16":
+            params["width"] = 576
+            params["height"] = 1024
+        elif aspect_ratio == "4:3":
+            params["width"] = 1024
+            params["height"] = 768
+        elif aspect_ratio == "3:4":
+            params["width"] = 768
+            params["height"] = 1024
+        
+        # Add style to prompt
+        if pollinations_style:
+            full_prompt = f"{prompt}, {pollinations_style} style, high quality, detailed"
+            encoded_full_prompt = requests.utils.quote(full_prompt)
+            url = f"https://image.pollinations.ai/prompt/{encoded_full_prompt}"
+        
+        # Make the request
+        response = requests.get(url, params=params, timeout=30)
+        
+        if response.status_code == 200:
+            image_data = response.content
+            return True, image_data
+        else:
+            return False, f"Image generation failed with status: {response.status_code}"
         
     except Exception as e:
         logger.error(f"Image generation error: {e}")
@@ -131,11 +163,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     welcome_text = (
         f"🎨 **Hello {user.first_name}!**\n\n"
-        "Welcome to **AIPaint1bot** - your AI art generator!\n\n"
+        "Welcome to **AIPaint1bot** - your FREE AI art generator!\n\n"
+        "✨ **No API keys required!**\n\n"
         "📌 **How it works:**\n"
-        "1. Use the menu below to select options\n"
+        "1. Use the menu below\n"
         "2. Enter your image description\n"
-        "3. AI will generate your image!\n\n"
+        "3. AI will generate your image for FREE!\n\n"
         "📊 **Commands:**\n"
         "/start - Show this menu\n"
         "/generate - Generate an image\n"
@@ -186,10 +219,12 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     about_text = (
         f"🤖 **{BOT_NAME}**\n\n"
         f"📌 Version: `{BOT_VERSION}`\n"
-        "⚡ AI Model: `Google Gemini 2.0 Flash`\n"
+        "⚡ AI Model: `Pollinations.ai`\n"
+        "💲 **FREE - No API Key Required!**\n"
         "📅 Status: ✅ **Online**\n\n"
         "🔹 **Features:**\n"
-        "• AI-powered image generation\n"
+        "• FREE AI image generation\n"
+        "• No sign-up required\n"
         "• Multiple aspect ratios\n"
         "• Various art styles\n"
         "• User-friendly interface\n"
@@ -207,7 +242,7 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_sessions:
         user_sessions[user_id] = {
             "aspect_ratio": "1:1",
-            "style": "photorealistic",
+            "style": "realistic",
             "waiting_for_prompt": False
         }
     
@@ -218,7 +253,8 @@ async def generate_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Please describe the image you want to generate.\n"
         "Be specific for better results!\n\n"
         "📝 **Example:** 'A futuristic city at sunset with neon lights, cyberpunk style'\n\n"
-        "🔧 Use /settings to change aspect ratio or style.",
+        "🔧 Use /settings to change aspect ratio or style.\n"
+        "💲 **FREE - No API Key Required!**",
         parse_mode="Markdown"
     )
 
@@ -230,12 +266,12 @@ async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_sessions:
         user_sessions[user_id] = {
             "aspect_ratio": "1:1",
-            "style": "photorealistic",
+            "style": "realistic",
             "waiting_for_prompt": False
         }
     
     current_ratio = user_sessions[user_id].get("aspect_ratio", "1:1")
-    current_style = user_sessions[user_id].get("style", "photorealistic")
+    current_style = user_sessions[user_id].get("style", "realistic")
     
     settings_text = (
         f"⚙️ **Settings**\n\n"
@@ -268,7 +304,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_sessions:
         user_sessions[user_id] = {
             "aspect_ratio": "1:1",
-            "style": "photorealistic",
+            "style": "realistic",
             "waiting_for_prompt": False
         }
     
@@ -312,14 +348,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif query.data == "change_style":
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📸 Photorealistic", callback_data="style_photorealistic")],
-            [InlineKeyboardButton("🎨 Anime/Manga", callback_data="style_anime")],
+            [InlineKeyboardButton("📸 Realistic", callback_data="style_realistic")],
+            [InlineKeyboardButton("🎨 Anime", callback_data="style_anime")],
             [InlineKeyboardButton("🖼️ Oil Painting", callback_data="style_oil_painting")],
             [InlineKeyboardButton("💧 Watercolor", callback_data="style_watercolor")],
-            [InlineKeyboardButton("✏️ Sketch/Drawing", callback_data="style_sketch")],
-            [InlineKeyboardButton("🎮 3D Render", callback_data="style_3d_render")],
+            [InlineKeyboardButton("✏️ Sketch", callback_data="style_sketch")],
+            [InlineKeyboardButton("🎮 3D Render", callback_data="style_3d")],
             [InlineKeyboardButton("🎬 Cinematic", callback_data="style_cinematic")],
-            [InlineKeyboardButton("🌀 Abstract", callback_data="style_abstract")],
             [InlineKeyboardButton("🔙 Back to Settings", callback_data="settings")]
         ])
         
@@ -346,7 +381,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_sessions:
         user_sessions[user_id] = {
             "aspect_ratio": "1:1",
-            "style": "photorealistic",
+            "style": "realistic",
             "waiting_for_prompt": False
         }
     
@@ -360,22 +395,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Get user settings
     aspect_ratio = user_sessions[user_id].get("aspect_ratio", "1:1")
-    style = user_sessions[user_id].get("style", "photorealistic")
-    
-    # Build enhanced prompt
-    style_prompts = {
-        "photorealistic": "photorealistic, highly detailed",
-        "anime": "anime style, manga style",
-        "oil_painting": "oil painting style, artistic",
-        "watercolor": "watercolor painting style",
-        "sketch": "sketch style, pencil drawing",
-        "3d_render": "3D render, CGI, detailed",
-        "cinematic": "cinematic style, movie scene",
-        "abstract": "abstract art style"
-    }
-    
-    style_prompt = style_prompts.get(style, "")
-    enhanced_prompt = f"{text} - {style_prompt}" if style_prompt else text
+    style = user_sessions[user_id].get("style", "realistic")
     
     # Send processing message
     processing_msg = await update.message.reply_text(
@@ -387,20 +407,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Generate the image
-    success, result = await generate_image_with_gemini(enhanced_prompt, aspect_ratio)
+    success, result = await generate_image_free(text, aspect_ratio, style)
     
     if success:
-        image_data, mime_type = result
+        image_data = result
         await processing_msg.delete()
         
         # Send the generated image
         await update.message.reply_photo(
-            photo=image_data,
+            photo=BytesIO(image_data),
             caption=(
                 f"✅ **Image Generated!**\n\n"
                 f"📝 **Prompt:** `{text}`\n"
                 f"🎨 **Style:** `{style}`\n"
-                f"📐 **Aspect Ratio:** `{aspect_ratio}`\n\n"
+                f"📐 **Aspect Ratio:** `{aspect_ratio}`\n"
+                f"💲 **FREE - No API Key Required!**\n\n"
                 f"🔄 Send another description to generate more images!"
             ),
             parse_mode="Markdown"
@@ -442,7 +463,7 @@ def main():
     logger.info(f"🚀 Starting {BOT_NAME}...")
     logger.info(f"📌 Version: {BOT_VERSION}")
     logger.info(f"🔧 Debug Mode: {DEBUG_MODE}")
-    logger.info(f"🤖 AI Model: Gemini 2.0 Flash")
+    logger.info(f"🤖 AI Model: Pollinations.ai (FREE - No API Key)")
     
     try:
         # Create application
